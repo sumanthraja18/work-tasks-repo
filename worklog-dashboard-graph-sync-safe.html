@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Daily Worklog & Follow-ups — Microsoft Graph Sync</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- MSAL.js (Browser) -->
+  <script src="https://alcdn.msauth.net/browser/2.38.4/js/msal-browser.min.js"></script>
+<script>window.__MSAL_AVAILABLE__ = !!window.msal;</script>
+  <style>
+    :focus { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .muted { color: rgb(100 116 139); }
+    .card { background:white; border-radius: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+  <header class="max-w-6xl mx-auto p-4 sm:p-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <h1 class="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+      <span>🗒️</span> Worklog & Follow-ups (Graph Sync)
+    </h1>
+    <div class="flex flex-wrap items-center gap-2">
+      <div id="authStatus" class="text-sm muted">Signed out</div>
+      <button id="signInBtn" class="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50">Sign in</button>
+      <button id="signOutBtn" class="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50 hidden">Sign out</button>
+      <button id="syncNowBtn" class="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50 hidden">Sync now</button>
+      <span id="syncState" class="text-sm muted"></span>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
+    <section class="card p-4 sm:p-5 text-sm">
+      <p class="font-semibold mb-1">This version saves locally <em>and</em> in your OneDrive “App Folder”.</p>
+      <ul class="list-disc pl-5 space-y-1">
+        <li>Click <b>Sign in</b> and approve access. The app stores its data in a private app folder in your OneDrive (not visible to other apps).</li>
+        <li>No extra software install. If your org blocks consent, ask IT once to approve the app (instructions below).</li>
+      </ul>
+      <details class="mt-2">
+        <summary class="cursor-pointer text-blue-700">IT one-time setup (if consent is blocked)</summary>
+        <ol class="list-decimal pl-5 space-y-1 mt-2">
+          <li>Register a “Single-page application” in Microsoft Entra (Azure AD) with:
+            <ul class="list-disc pl-5">
+              <li><b>Redirect URI</b>: the HTTPS URL where this file is hosted (e.g., GitHub Pages).</li>
+              <li><b>Supported account types</b>: “Accounts in this organizational directory only”.</li>
+            </ul>
+          </li>
+          <li>Add delegated permissions: <code>User.Read</code> and <code>Files.ReadWrite.AppFolder</code>.</li>
+          <li>Grant admin consent if required by tenant policy.</li>
+          <li>Give the user the <b>Application (client) ID</b> and <b>Directory (tenant) ID</b>.</li>
+        </ol>
+      </details>
+    </section>
+
+    <section class="flex flex-wrap gap-2">
+      <button id="exportCsvBtn" class="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50">Export CSV</button>
+      <button id="exportJsonBtn" class="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50">Backup (JSON)</button>
+      <label class="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50 cursor-pointer">
+        Restore (JSON)
+        <input id="importJsonInput" type="file" accept="application/json" class="hidden" />
+      </label>
+      <button id="resetBtn" class="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50">Reset</button>
+    </section>
+
+    <!-- Input Card -->
+    <section class="card p-4 sm:p-6">
+      <h2 class="text-lg font-semibold mb-4">Log Activity</h2>
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm muted mb-1" for="date">Date</label>
+          <input id="date" type="date" class="w-full px-3 py-2 rounded-lg border" />
+        </div>
+        <div>
+          <label class="block text-sm muted mb-1" for="title">Title</label>
+          <input id="title" type="text" placeholder="What did you work on?" class="w-full px-3 py-2 rounded-lg border" />
+        </div>
+        <div class="sm:col-span-2">
+          <label class="block text-sm muted mb-1" for="details">Details</label>
+          <textarea id="details" placeholder="Optional notes" class="w-full px-3 py-2 rounded-lg border"></textarea>
+        </div>
+        <div>
+          <label class="block text-sm muted mb-1" for="duration">Duration (minutes)</label>
+          <input id="duration" type="number" min="0" class="w-full px-3 py-2 rounded-lg border" />
+        </div>
+        <div>
+          <label class="block text-sm muted mb-1" for="tags">Tags (comma separated)</label>
+          <input id="tags" type="text" placeholder="sepsis, etl, meeting" class="w-full px-3 py-2 rounded-lg border" />
+        </div>
+        <div>
+          <label class="block text-sm muted mb-1">Status</label>
+          <select id="status" class="w-full px-3 py-2 rounded-lg border">
+            <option value="in_progress">In Progress</option>
+            <option value="done">Done</option>
+            <option value="blocked">Blocked</option>
+          </select>
+        </div>
+        <div>
+          <label class="inline-flex items-center gap-2 mt-7">
+            <input id="createFollowUp" type="checkbox" class="w-4 h-4" />
+            Create follow-up
+          </label>
+          <div id="followupFields" class="hidden mt-3 border rounded-xl p-3">
+            <input id="followUpTitle" type="text" placeholder="Follow-up title (optional)" class="w-full px-3 py-2 rounded-lg border mb-2" />
+            <label class="block text-sm muted mb-1" for="followUpDue">Due date (optional)</label>
+            <input id="followUpDue" type="date" class="w-full px-3 py-2 rounded-lg border" />
+          </div>
+        </div>
+        <div class="sm:col-span-2 flex justify-end">
+          <button id="addActivityBtn" class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">Add Activity</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Filters -->
+    <section class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-sm muted">Summary Range</span>
+        <select id="rangeKey" class="w-44 px-3 py-2 rounded-lg border bg-white">
+          <option value="today">Today</option>
+          <option value="last7">Last 7 days</option>
+          <option value="last30">Last 30 days</option>
+          <option value="week">This week</option>
+          <option value="month">This month</option>
+        </select>
+      </div>
+      <div class="relative">
+        <input id="searchText" class="pl-9 pr-3 py-2 rounded-lg border w-72" placeholder="Search title, notes, tags" />
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 muted">🔎</span>
+      </div>
+    </section>
+
+    <!-- KPIs -->
+    <section class="grid sm:grid-cols-4 gap-4">
+      <div class="card p-4">
+        <div class="text-sm muted">Total Hours</div>
+        <div id="kpiHours" class="text-3xl font-bold">0</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-sm muted">Activities Logged</div>
+        <div id="kpiActivities" class="text-3xl font-bold">0</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-sm muted">Done</div>
+        <div id="kpiDone" class="text-3xl font-bold">0</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-sm muted">Open Follow-ups</div>
+        <div id="kpiOpenFU" class="text-3xl font-bold">0</div>
+      </div>
+    </section>
+
+    <!-- Charts -->
+    <section class="grid sm:grid-cols-2 gap-4">
+      <div class="card p-4">
+        <div class="text-base font-semibold mb-2">Hours by Day</div>
+        <canvas id="chartByDay" height="240"></canvas>
+      </div>
+      <div class="card p-4">
+        <div class="text-base font-semibold mb-2">Hours by Tag</div>
+        <canvas id="chartByTag" height="240"></canvas>
+      </div>
+      <div class="card p-4 sm:col-span-2">
+        <div class="text-base font-semibold mb-2">Cumulative Tasks</div>
+        <canvas id="chartCumulative" height="260"></canvas>
+      </div>
+    </section>
+
+    <!-- Lists -->
+    <section class="grid sm:grid-cols-2 gap-4">
+      <div class="card p-4">
+        <div class="text-lg font-semibold mb-3">Activities in Range</div>
+        <div id="activitiesList" class="space-y-3 text-sm"></div>
+      </div>
+      <div class="card p-4">
+        <div class="text-lg font-semibold mb-3">Follow-ups</div>
+        <div>
+          <div class="font-semibold mb-2">Open</div>
+          <div id="openFU" class="space-y-2 text-sm"></div>
+        </div>
+        <div class="mt-4">
+          <div class="font-semibold mb-2">Completed</div>
+          <div id="doneFU" class="space-y-2 text-sm"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ======= CONFIG: Fill these in (or ask IT to) =======
+    const CLIENT_ID = "85e27d0c-ed97-47b3-81a7-da5bec73e615";
+    const TENANT_ID = "71a69018-0794-41c0-80a8-d13e1faf30a6"; // e.g., "contoso.onmicrosoft.com" or GUID
+    const REDIRECT_URI = window.location.origin + window.location.pathname; // must be registered
+
+    // ======= MSAL Setup =======
+    const msalConfig = {
+      auth: { clientId: CLIENT_ID, authority: `https://login.microsoftonline.com/${TENANT_ID}`, redirectUri: REDIRECT_URI },
+      cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
+    };
+    const loginRequest = { scopes: ["User.Read", "Files.ReadWrite.AppFolder"] };
+    const tokenRequest = { scopes: ["Files.ReadWrite.AppFolder"] };
+    let msalInstance = null;
+try {
+  if (window.__MSAL_AVAILABLE__) { msalInstance = new msal.PublicClientApplication(msalConfig); }
+} catch (e) { console.warn("MSAL init failed:", e); msalInstance = null; }
+
+    let account = null;
+
+    async function signIn() {
+      try {
+        const result = await msalInstance.loginPopup(loginRequest);
+        account = result.account;
+        if (msalInstance) msalInstance.setActiveAccount(account);
+        updateAuthUI(true, account);
+        await cloudLoad();
+      } catch (e) {
+        console.error(e);
+        alert("Sign-in failed or was canceled.");
+      }
+    }
+    function signOut() {
+      const active = msalInstance ? msalInstance.getActiveAccount() : null;
+      if (!active) return;
+      msalInstance.logoutPopup({ account: active });
+      account = null;
+      updateAuthUI(false, null);
+    }
+    async function getToken() {
+      try {
+        const result = await (msalInstance ? msalInstance.acquireTokenSilent({ ...tokenRequest, account: msalInstance.getActiveAccount() }) : Promise.reject(new Error("MSAL not available")));
+        return result.accessToken;
+      } catch (e) {
+        const result = await (msalInstance ? msalInstance.acquireTokenPopup(tokenRequest) : Promise.reject(new Error("MSAL not available")));
+        return result.accessToken;
+      }
+    }
+    function updateAuthUI(authed, acct) {
+      document.getElementById("authStatus").textContent = authed ? ("Signed in as " + (acct?.username || "user")) : "Signed out";
+      document.getElementById("signInBtn").classList.toggle("hidden", authed);
+      document.getElementById("signOutBtn").classList.toggle("hidden", !authed);
+      document.getElementById("syncNowBtn").classList.toggle("hidden", !authed || !msalInstance);
+    }
+
+    // ======= Graph helpers (App Folder) =======
+    const APPFILE = "worklog.json";
+    async function graphGet(url, token) {
+      const res = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+      if (!res.ok) throw new Error("Graph GET " + res.status);
+      return res;
+    }
+    async function graphPut(url, token, body) {
+      const res = await fetch(url, { method: "PUT", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body });
+      if (!res.ok) throw new Error("Graph PUT " + res.status);
+      return res;
+    }
+    async function loadFromCloud() {
+      const token = await getToken();
+      // Try to get file content; if not exists, create it
+      const contentUrl = `https://graph.microsoft.com/v1.0/me/drive/special/approot:/${APPFILE}:/content`;
+      const metaUrl = `https://graph.microsoft.com/v1.0/me/drive/special/approot:/${APPFILE}`;
+      try {
+        const res = await graphGet(metaUrl, token); // check existence
+        if (res.ok) {
+          const contentRes = await graphGet(contentUrl, token);
+          const text = await contentRes.text();
+          if (text.trim().length) {
+            const obj = JSON.parse(text);
+            if (Array.isArray(obj.activities) && Array.isArray(obj.followUps)) {
+              store = obj; saveStore(store);
+            }
+          }
+        }
+      } catch (e) {
+        // Create empty file
+        await graphPut(contentUrl, token, JSON.stringify({ activities: [], followUps: [] }, null, 2));
+      }
+    }
+    async function saveToCloud() {
+      const token = await getToken();
+      const contentUrl = `https://graph.microsoft.com/v1.0/me/drive/special/approot:/${APPFILE}:/content`;
+      await graphPut(contentUrl, token, JSON.stringify(store, null, 2));
+    }
+
+    // ======= Local store & UI (same as previous) =======
+    const STORAGE_KEY = "worklog_followups_store_v1";
+    function uid(prefix = "id") { return prefix + "_" + Math.random().toString(36).slice(2,9) + "_" + Date.now().toString(36); }
+    function todayISO() { const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+    function parseTags(input){ return (input||"").split(",").map(t=>t.trim()).filter(Boolean).map(t=>t.toLowerCase()); }
+    function startOfDay(d){ const x=new Date(d); x.setHours(0,0,0,0); return x; }
+    function withinRange(dateISO,range){ const day=startOfDay(new Date(dateISO)); return day>=startOfDay(range.start)&&day<=startOfDay(range.end); }
+    function lastNDays(n){ const end=startOfDay(new Date()); const start=new Date(end); start.setDate(end.getDate()-(n-1)); return {start,end}; }
+    function thisWeekRange(){ const now=new Date(); const day=now.getDay(); const start=new Date(now); start.setDate(now.getDate()-day); const end=new Date(start); end.setDate(start.getDate()+6); return {start:startOfDay(start), end:startOfDay(end)};}
+    function thisMonthRange(){ const now=new Date(); const start=new Date(now.getFullYear(), now.getMonth(),1); const end=new Date(now.getFullYear(), now.getMonth()+1,0); return {start:startOfDay(start), end:startOfDay(end)};}
+    function getRange(k){ switch(k){ case"today":return{start:startOfDay(new Date()), end:startOfDay(new Date())}; case"last7":return lastNDays(7); case"last30":return lastNDays(30); case"week":return thisWeekRange(); case"month":return thisMonthRange(); default:return lastNDays(7);}}
+    function loadStore(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return {activities:[],followUps:[]}; const p=JSON.parse(raw); return {activities:Array.isArray(p.activities)?p.activities:[], followUps:Array.isArray(p.followUps)?p.followUps:[]}; }catch{return {activities:[],followUps:[]}}}
+    function saveStore(s){ localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }
+    function exportCSV(filename, rows){ if(!rows.length) return; const headers=Object.keys(rows[0]); const csv=[headers.join(",")].concat(rows.map(r=>headers.map(h=>JSON.stringify(r[h]??"")).join(","))).join("\\n"); const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
+    function exportJSON(filename, obj){ const blob=new Blob([JSON.stringify(obj,null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
+    function fmtHours(mins){ return Math.round((mins/60)*100)/100; }
+
+    let store = loadStore();
+    let rangeKey = "last7";
+    let searchText = "";
+
+    const els = {
+      date: document.getElementById("date"),
+      title: document.getElementById("title"),
+      details: document.getElementById("details"),
+      duration: document.getElementById("duration"),
+      tags: document.getElementById("tags"),
+      status: document.getElementById("status"),
+      createFollowUp: document.getElementById("createFollowUp"),
+      followupFields: document.getElementById("followupFields"),
+      followUpTitle: document.getElementById("followUpTitle"),
+      followUpDue: document.getElementById("followUpDue"),
+      addActivityBtn: document.getElementById("addActivityBtn"),
+      exportCsvBtn: document.getElementById("exportCsvBtn"),
+      exportJsonBtn: document.getElementById("exportJsonBtn"),
+      importJsonInput: document.getElementById("importJsonInput"),
+      resetBtn: document.getElementById("resetBtn"),
+      rangeKey: document.getElementById("rangeKey"),
+      searchText: document.getElementById("searchText"),
+      activitiesList: document.getElementById("activitiesList"),
+      openFU: document.getElementById("openFU"),
+      doneFU: document.getElementById("doneFU"),
+      kpiHours: document.getElementById("kpiHours"),
+      kpiActivities: document.getElementById("kpiActivities"),
+      kpiDone: document.getElementById("kpiDone"),
+      kpiOpenFU: document.getElementById("kpiOpenFU"),
+      signInBtn: document.getElementById("signInBtn"),
+      signOutBtn: document.getElementById("signOutBtn"),
+      syncNowBtn: document.getElementById("syncNowBtn"),
+      authStatus: document.getElementById("authStatus"),
+      syncState: document.getElementById("syncState"),
+    };
+
+    // Toggle follow-up fields
+    els.createFollowUp.addEventListener("change", e => els.followupFields.classList.toggle("hidden", !e.target.checked));
+
+    // Add Activity
+    els.addActivityBtn.addEventListener("click", async () => {
+      const title = (els.title.value || "").trim();
+      if (!title) { alert("Please enter a title for the activity."); return; }
+      const act = {
+        id: uid("act"),
+        date: els.date.value || todayISO(),
+        title,
+        details: (els.details.value || "").trim() || undefined,
+        durationMinutes: els.duration.value ? Number(els.duration.value) : 0,
+        tags: parseTags(els.tags.value),
+        status: els.status.value,
+        followUp: els.createFollowUp.checked,
+      };
+      if (els.createFollowUp.checked) {
+        const f = {
+          id: uid("fu"), createdAt: todayISO(), dueDate: els.followUpDue.value || undefined,
+          title: (els.followUpTitle.value || title), notes: act.details, tags: act.tags, status: "open",
+        };
+        act.followUpId = f.id;
+        store.followUps = [f, ...store.followUps];
+      }
+      store.activities = [act, ...store.activities];
+      saveStore(store);
+      renderAll();
+      // Autosave to cloud if signed in
+      if (msalInstance.getActiveAccount()) { els.syncState.textContent = "Saving to cloud…"; try { await saveToCloud(); els.syncState.textContent = "Saved"; } catch { els.syncState.textContent = "Cloud save failed"; } }
+      // Reset form
+      els.title.value=""; els.details.value=""; els.duration.value=""; els.tags.value="";
+      els.status.value="in_progress"; els.createFollowUp.checked=false; els.followupFields.classList.add("hidden"); els.followUpTitle.value=""; els.followUpDue.value="";
+    });
+
+    // Export / Import / Reset
+    els.exportCsvBtn.addEventListener("click", () => {
+      const activities = store.activities.map(a => ({ id:a.id, date:a.date, title:a.title, details:a.details||"", durationMinutes:a.durationMinutes||0, tags:(a.tags||[]).join("|"), status:a.status, followUpId:a.followUpId||"" }));
+      const follows = store.followUps.map(f => ({ id:f.id, createdAt:f.createdAt, dueDate:f.dueDate||"", title:f.title, notes:f.notes||"", tags:(f.tags||[]).join("|"), status:f.status }));
+      const t = todayISO(); exportCSV(`activities_${t}.csv`, activities); exportCSV(`followups_${t}.csv`, follows);
+    });
+    els.exportJsonBtn.addEventListener("click", () => exportJSON(`worklog_backup_${todayISO()}.json`, store));
+    els.importJsonInput.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0]; if (!file) return;
+      try {
+        const text = await file.text(); const obj = JSON.parse(text);
+        if (!Array.isArray(obj.activities) || !Array.isArray(obj.followUps)) throw new Error("JSON must have activities[] and followUps[]");
+        if (!confirm("This will replace your current data. Continue?")) return;
+        store = { activities: obj.activities, followUps: obj.followUps }; saveStore(store); renderAll();
+        if (msalInstance.getActiveAccount()) { els.syncState.textContent = "Saving to cloud…"; await saveToCloud(); els.syncState.textContent = "Saved"; }
+      } catch (err) { alert("Failed to import JSON: " + err.message); }
+      finally { e.target.value = ""; }
+    });
+    els.resetBtn.addEventListener("click", async () => {
+      if (!confirm("This will erase local data for this app. Continue?")) return;
+      store = { activities: [], followUps: [] }; saveStore(store); renderAll();
+      if (msalInstance.getActiveAccount()) { els.syncState.textContent = "Saving to cloud…"; try { await saveToCloud(); els.syncState.textContent = "Saved"; } catch { els.syncState.textContent = "Cloud save failed"; } }
+    });
+
+    // Filters & rendering
+    document.getElementById("rangeKey").addEventListener("change", (e)=>{ rangeKey = e.target.value; renderAll(); });
+    document.getElementById("searchText").addEventListener("input", (e)=>{ searchText = e.target.value.toLowerCase(); renderAll(); });
+
+    function getRangeObject(){ return getRange(rangeKey); }
+    function activitiesInRange(){
+      const r=getRangeObject(); const q=(searchText||"").trim();
+      return store.activities
+        .filter(a=>withinRange(a.date,r))
+        .filter(a=> q ? [a.title,a.details||"",...(a.tags||[])].join(" ").toLowerCase().includes(q.toLowerCase()) : true)
+        .sort((a,b)=>a.date.localeCompare(b.date));
+    }
+    function openFollowUps(){ return store.followUps.filter(f=>f.status!=="done"); }
+    function doneFollowUps(){ return store.followUps.filter(f=>f.status==="done"); }
+    function sumMinutes(arr){ return arr.reduce((s,a)=>s+(a.durationMinutes||0),0); }
+    function groupHoursByDay(acts){ const m={}; acts.forEach(a=>{ m[a.date]=(m[a.date]||0)+(a.durationMinutes||0); }); const e=Object.entries(m).sort((a,b)=>a[0].localeCompare(b[0])); return { labels:e.map(x=>x[0]), hours:e.map(x=>fmtHours(x[1]))}; }
+    function groupHoursByTag(acts){ const m={}; acts.forEach(a=>(a.tags||[]).forEach(t=>{ m[t]=(m[t]||0)+(a.durationMinutes||0);})); const e=Object.entries(m).sort((a,b)=>b[1]-a[1]); return { labels:e.map(x=>x[0]), hours:e.map(x=>fmtHours(x[1]))}; }
+    function cumulativeTasks(acts){ const s=[...acts].sort((a,b)=>a.date.localeCompare(b.date)); let ca=0, cd=0; const L=[], A=[], D=[]; s.forEach(a=>{ ca+=1; if(a.status==="done") cd+=1; L.push(a.date); A.push(ca); D.push(cd); }); return {labels:L, all:A, done:D}; }
+
+    let chartByDay, chartByTag, chartCumulative;
+    function renderCharts(acts){
+      const byDay=groupHoursByDay(acts), byTag=groupHoursByTag(acts), cum=cumulativeTasks(acts);
+      if(chartByDay) chartByDay.destroy();
+      chartByDay = new Chart(document.getElementById("chartByDay").getContext("2d"), { type:"bar", data:{ labels:byDay.labels, datasets:[{ label:"Hours", data:byDay.hours }] }, options:{ responsive:true, scales:{ y:{ beginAtZero:true }}}});
+      if(chartByTag) chartByTag.destroy();
+      chartByTag = new Chart(document.getElementById("chartByTag").getContext("2d"), { type:"pie", data:{ labels:byTag.labels, datasets:[{ label:"Hours", data:byTag.hours }] }, options:{ responsive:true }});
+      if(chartCumulative) chartCumulative.destroy();
+      chartCumulative = new Chart(document.getElementById("chartCumulative").getContext("2d"), { type:"line", data:{ labels:cum.labels, datasets:[{ label:"All", data:cum.all, tension:.3 }, { label:"Done", data:cum.done, tension:.3 }] }, options:{ responsive:true, scales:{ y:{ beginAtZero:true }}}});
+    }
+    function renderActivitiesList(acts){
+      const root=document.getElementById("activitiesList"); root.innerHTML="";
+      if(!acts.length){ root.innerHTML='<p class="muted">No activities logged for this range.</p>'; return; }
+      acts.forEach(a=>{
+        const wrap=document.createElement("div"); wrap.className="border rounded-xl p-3 bg-white flex items-start justify-between gap-3";
+        wrap.innerHTML=\`
+          <div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="px-2 py-1 rounded bg-slate-100 text-slate-700 text-xs">\${new Date(a.date).toLocaleDateString()}</span>
+              <span class="font-medium">\${a.title}</span>
+            </div>
+            \${a.details ? '<p class="text-sm muted mt-1">'+a.details+'</p>' : ''}
+            <div class="flex flex-wrap gap-2 mt-2 text-xs">
+              \${a.durationMinutes ? '<span class="px-2 py-1 rounded border">'+fmtHours(a.durationMinutes)+' h</span>' : ''}
+              <span class="px-2 py-1 rounded border">\${a.status.replace('_',' ')}</span>
+              \${(a.tags||[]).map(t=>'<span class="px-2 py-1 rounded bg-slate-100">#'+t+'</span>').join('')}
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            \${a.followUpId ? '<span class="px-2 py-1 rounded bg-blue-600 text-white text-xs">FU</span>' : ''}
+            <button class="px-2 py-1 rounded hover:bg-slate-100 muted" title="Delete">🗑️</button>
+          </div>\`;
+        wrap.querySelector("button[title='Delete']").addEventListener("click", async ()=>{
+          if(!confirm("Delete this activity?")) return;
+          store.activities = store.activities.filter(x=>x.id!==a.id); saveStore(store); renderAll();
+          if (msalInstance.getActiveAccount()) { try { await saveToCloud(); } catch {} }
+        });
+        root.appendChild(wrap);
+      });
+    }
+    function renderFollowUps(){
+      const openRoot=document.getElementById("openFU"); const doneRoot=document.getElementById("doneFU");
+      openRoot.innerHTML=""; doneRoot.innerHTML="";
+      const makeFU=(f)=>{
+        const wrap=document.createElement("div"); wrap.className="border rounded-xl p-3 bg-white flex items-start justify-between gap-3";
+        wrap.innerHTML=\`
+          <div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="px-2 py-1 rounded bg-slate-100 text-slate-700 text-xs">\${f.dueDate ? ('Due '+new Date(f.dueDate).toLocaleDateString()) : 'No due date'}</span>
+              <span class="font-medium">\${f.title}</span>
+            </div>
+            \${f.notes ? '<p class="text-sm muted mt-1">'+f.notes+'</p>' : ''}
+            <div class="flex flex-wrap gap-2 mt-2 text-xs">\${(f.tags||[]).map(t=>'<span class="px-2 py-1 rounded bg-slate-100">#'+t+'</span>').join('')}</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <select class="px-2 py-1 rounded-lg border">
+              <option value="open" \${f.status==="open"?"selected":""}>Open</option>
+              <option value="in_progress" \${f.status==="in_progress"?"selected":""}>In Progress</option>
+              <option value="done" \${f.status==="done"?"selected":""}>Done</option>
+            </select>
+            <button class="px-2 py-1 rounded hover:bg-slate-100 muted" title="Remove">🗑️</button>
+          </div>\`;
+        const select=wrap.querySelector("select");
+        select.addEventListener("change", async (e)=>{
+          store.followUps = store.followUps.map(x=>x.id===f.id ? { ...x, status:e.target.value } : x); saveStore(store); renderAll();
+          if (msalInstance.getActiveAccount()) { try { await saveToCloud(); } catch {} }
+        });
+        wrap.querySelector("button[title='Remove']").addEventListener("click", async ()=>{
+          if(!confirm("Remove this follow-up?")) return;
+          store.followUps = store.followUps.filter(x=>x.id!==f.id); saveStore(store); renderAll();
+          if (msalInstance.getActiveAccount()) { try { await saveToCloud(); } catch {} }
+        });
+        return wrap;
+      };
+      const open=store.followUps.filter(f=>f.status!=="done"); const done=store.followUps.filter(f=>f.status==="done");
+      if(!open.length) openRoot.innerHTML='<p class="muted">No open follow-ups.</p>'; else open.forEach(f=>openRoot.appendChild(makeFU(f)));
+      if(!done.length) doneRoot.innerHTML='<p class="muted">No completed follow-ups yet.</p>'; else done.forEach(f=>doneRoot.appendChild(makeFU(f)));
+    }
+    function renderKPIs(acts){
+      const totalMinutes = acts.reduce((s,a)=>s+(a.durationMinutes||0),0);
+      document.getElementById("kpiHours").textContent = fmtHours(totalMinutes);
+      document.getElementById("kpiActivities").textContent = acts.length;
+      document.getElementById("kpiDone").textContent = acts.filter(a=>a.status==="done").length;
+      document.getElementById("kpiOpenFU").textContent = store.followUps.filter(f=>f.status!=="done").length;
+    }
+    function renderAll(){
+      const acts = activitiesInRange(); renderKPIs(acts); renderCharts(acts); renderActivitiesList(acts); renderFollowUps();
+    }
+
+    // ======= Cloud load/save triggers =======
+    async function cloudLoad(){ if (!msalInstance) { document.getElementById("syncState").textContent = "Cloud disabled (MSAL blocked)"; return; }
+      document.getElementById("syncState").textContent = "Loading from cloud…";
+      try { await loadFromCloud(); document.getElementById("syncState").textContent = "Loaded"; renderAll(); }
+      catch(e){ document.getElementById("syncState").textContent = "Cloud load failed"; console.warn(e); }
+    }
+    async function cloudSave(){ if (!msalInstance) { document.getElementById("syncState").textContent = "Cloud disabled (MSAL blocked)"; return; }
+      document.getElementById("syncState").textContent = "Saving to cloud…";
+      try { await saveToCloud(); document.getElementById("syncState").textContent = "Saved"; }
+      catch(e){ document.getElementById("syncState").textContent = "Cloud save failed"; console.warn(e); }
+    }
+
+    // Buttons
+    document.getElementById("signInBtn").addEventListener("click", ()=>{ if (!msalInstance) { alert("Sign-in disabled because MSAL is blocked by network policy. The app will still work locally. Ask IT to allow \"alcdn.msauth.net\" and \"login.microsoftonline.com\", or try from a non-corporate network."); return; } signIn(); });
+    document.getElementById("signOutBtn").addEventListener("click", ()=>{ if (!msalInstance) return; signOut(); });
+    document.getElementById("syncNowBtn").addEventListener("click", ()=>{ if (!msalInstance) return; cloudSave(); });
+
+    // Init
+    document.addEventListener("DOMContentLoaded", ()=>{
+      els.date.value = todayISO();
+      (msalInstance ? msalInstance.handleRedirectPromise() : Promise.resolve()).then((res)=>{
+        const acct = msalInstance.getAllAccounts()[0];
+        if (acct) { msalInstance.setActiveAccount(acct); account = acct; updateAuthUI(true, acct); cloudLoad(); }
+      });
+      renderAll();
+    });
+  </script>
+</body>
+</html>
