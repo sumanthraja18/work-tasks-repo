@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Worklog (No-CDN Minimal)</title>
+<style>
+  :root{--bg:#f8fafc;--card:#fff;--text:#0f172a;--muted:#475569;--border:#e2e8f0;--accent:#2563eb}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:900px;margin:auto;padding:24px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  input,textarea,select{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:10px;font:inherit}
+  button{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#fff;cursor:pointer}
+  .primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .list{display:grid;gap:10px}
+  .item{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;border:1px solid var(--border);border-radius:12px;padding:10px;background:#fff}
+  .tag{background:#eef2ff;border-radius:999px;padding:2px 8px;font-size:12px;margin-right:6px}
+  @media (max-width:700px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr));}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Worklog (No-CDN Minimal)</h1>
+  <div class="card">
+    <div class="row">
+      <div style="flex:1 1 160px">
+        <label for="date">Date</label>
+        <input id="date" type="date">
+      </div>
+      <div style="flex:2 1 260px">
+        <label for="title">Title</label>
+        <input id="title" placeholder="What did you work on?">
+      </div>
+      <div style="flex:1 1 160px">
+        <label for="duration">Duration (minutes)</label>
+        <input id="duration" type="number" min="0">
+      </div>
+      <div style="flex:1 1 200px">
+        <label for="tags">Tags (comma separated)</label>
+        <input id="tags" placeholder="sepsis, etl">
+      </div>
+      <div style="flex:1 1 160px">
+        <label for="status">Status</label>
+        <select id="status">
+          <option value="in_progress">In Progress</option>
+          <option value="done">Done</option>
+          <option value="blocked">Blocked</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div style="flex:1 1 100%">
+        <label for="details">Details</label>
+        <textarea id="details" rows="3"></textarea>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px;justify-content:flex-end">
+      <button id="add" class="primary">Add Activity</button>
+      <button id="reset">Reset</button>
+    </div>
+  </div>
+
+  <div class="kpis" style="margin:12px 0">
+    <div class="card"><div>Total Hours</div><div id="kpiHours" style="font-weight:700;font-size:24px">0</div></div>
+    <div class="card"><div>Activities</div><div id="kpiCount" style="font-weight:700;font-size:24px">0</div></div>
+    <div class="card"><div>Done</div><div id="kpiDone" style="font-weight:700;font-size:24px">0</div></div>
+    <div class="card"><div>Open FUs</div><div id="kpiFU" style="font-weight:700;font-size:24px">0</div></div>
+  </div>
+
+  <div class="row">
+    <div class="card" style="flex:1 1 100%">
+      <h3>Activities</h3>
+      <div id="list" class="list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const KEY="worklog_followups_store_v1";
+const $=id=>document.getElementById(id);
+const today=()=>{const d=new Date();return d.toISOString().slice(0,10)};
+function load(){try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):{activities:[],followUps:[]}}catch(e){return {activities:[],followUps:[]}}}
+function save(s){localStorage.setItem(KEY,JSON.stringify(s))}
+function hours(min){return Math.round((min/60)*100)/100}
+let store=load();
+function render(){
+  const acts=[...store.activities].sort((a,b)=>a.date.localeCompare(b.date));
+  $("kpiCount").textContent=acts.length;
+  $("kpiDone").textContent=acts.filter(a=>a.status==="done").length;
+  $("kpiFU").textContent=store.followUps.filter(f=>f.status!=="done").length;
+  $("kpiHours").textContent=hours(acts.reduce((s,a)=>s+(a.durationMinutes||0),0));
+  const list=$("list"); list.innerHTML="";
+  if(!acts.length){list.innerHTML="<div class='muted'>No entries yet.</div>";return;}
+  acts.forEach(a=>{
+    const div=document.createElement("div"); div.className="item";
+    div.innerHTML=`
+      <div>
+        <div><strong>${a.title}</strong> <span class="muted">(${a.date})</span></div>
+        ${a.details?`<div class="muted">${a.details}</div>`:""}
+        <div style="margin-top:6px">
+          ${a.durationMinutes?`<span class="tag">${hours(a.durationMinutes)} h</span>`:""}
+          <span class="tag">${a.status.replace("_"," ")}</span>
+          ${(a.tags||[]).map(t=>`<span class="tag">#${t}</span>`).join("")}
+        </div>
+      </div>
+      <div><button data-id="${a.id}" class="del">🗑️</button></div>`;
+    div.querySelector(".del").addEventListener("click",()=>{
+      store.activities=store.activities.filter(x=>x.id!==a.id); save(store); render();
+    });
+    list.appendChild(div);
+  });
+}
+$("date").value=today();
+$("add").addEventListener("click",()=>{
+  const title=$("title").value.trim(); if(!title){alert("Please enter a title"); return;}
+  const act={
+    id:"act_"+Math.random().toString(36).slice(2,9)+"_"+Date.now().toString(36),
+    date:$("date").value||today(),
+    title,
+    details:$("details").value.trim()||undefined,
+    durationMinutes:$("duration").value?Number($("duration").value):0,
+    tags:($("tags").value||"").split(",").map(t=>t.trim()).filter(Boolean).map(t=>t.toLowerCase()),
+    status:$("status").value
+  };
+  store.activities=[act,...store.activities]; save(store);
+  $("title").value=""; $("details").value=""; $("duration").value=""; $("tags").value=""; $("status").value="in_progress";
+  render();
+});
+$("reset").addEventListener("click",()=>{
+  if(!confirm("Erase all local data?")) return;
+  store={activities:[],followUps:[]}; save(store); render();
+});
+render();
+</script>
+</body></html>
