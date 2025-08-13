@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Worklog Dashboard — Standalone</title>
+  <style>
+    :root{--bg:#f6f7fb;--card:#fff;--text:#0f172a;--muted:#475569;--border:#e3e8ef;--accent:#2563eb}.hidden{display:none !important;}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    .wrap{max-width:1100px;margin:auto;padding:24px}
+    h1{margin:0 0 10px 0;font-size:24px}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+    input,textarea,select{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font:inherit;background:#fff}
+    textarea{resize:vertical}
+    button{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#fff;cursor:pointer}
+    .primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .kpi .value{font-weight:700;font-size:24px}
+    .list{display:grid;gap:10px}
+    .item{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;border:1px solid var(--border);border-radius:12px;padding:10px;background:#fff}
+    .tag{background:#eef2ff;border-radius:999px;padding:2px 8px;font-size:12px;margin-right:6px}
+    .muted{color:var(--muted)}
+    canvas{width:100%;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#f1f5f9;border:1px solid var(--border);font-size:12px}
+.file-btn{position:relative; display:inline-block}
+.file-btn > input[type=file]{position:absolute; left:0; top:0; width:100%; height:100%; opacity:0; cursor:pointer}
+    @media (max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr));}}
+  
+    .accordion-item{border:1px solid var(--border);border-radius:12px;background:#fff}
+    .accordion-header{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;background:transparent;border:none;padding:10px 12px;cursor:pointer;border-radius:12px}
+    .accordion-header:focus{outline:2px solid var(--accent)}
+    .accordion-title{display:flex;align-items:center;gap:8px;text-align:left}
+    .caret{transition:transform .2s ease}
+    .accordion-content{display:none;padding:0 12px 12px 12px;border-top:1px dashed var(--border)}
+    .accordion-item.open .accordion-content{display:block}
+    .accordion-item.open .caret{transform:rotate(90deg)}
+    .toolbar-sm{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+    
+/* Follow-up header grid: title | status | edit | delete */
+.fu-header{
+  display:grid;
+  grid-template-columns: 1fr 140px 40px 40px;
+  align-items:center;
+  gap:8px;
+}
+.fu-status{ width:140px; }
+.fu-action{ width:40px; text-align:center; }
+.fu-edit, .fu-del{ width:40px; padding:6px 0; }
+.fu-edit{ border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer; }
+.fu-del{ border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer; }
+.fu-edit:hover, .fu-del:hover{ background:#f8fafc; }
+
+/* Color-coding by status */
+.accordion-item.fu-open, .item.fu-open{ border-left:6px solid #f59e0b; background:#fffbeb; }      /* Amber */
+.accordion-item.fu-inprogress, .item.fu-inprogress{ border-left:6px solid #3b82f6; background:#eff6ff; } /* Blue */
+.accordion-item.fu-done, .item.fu-done{ border-left:6px solid #10b981; background:#ecfdf5; }       /* Emerald */
+
+
+/* --- Follow-up header layout & controls --- */
+.accordion-header.fu-header{ display:grid !important; grid-template-columns: 1fr 160px 80px 80px; align-items:center; gap:8px; padding:10px 12px; }
+.fu-status{ width:160px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:#fff; }
+.fu-action{ width:80px; text-align:center; }
+.fu-btn{ width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer; }
+.fu-btn:hover{ background:#f8fafc; }
+/* Color-coding by status */
+.accordion-item.fu-open{ border-left:6px solid #f59e0b; background:#fffbeb; }
+.accordion-item.fu-inprogress{ border-left:6px solid #3b82f6; background:#eff6ff; }
+.accordion-item.fu-done{ border-left:6px solid #10b981; background:#ecfdf5; }
+
+
+/* Printable overlay fallback */
+.print-overlay{position:fixed; inset:0; background:#fff; z-index:9999; overflow:auto; padding:24px}
+.print-toolbar{display:flex; justify-content:flex-end; gap:8px; margin-bottom:12px}
+@media print{
+  .no-print, .wrap{ display:none !important; }
+  .print-overlay{ position:static; inset:auto; padding:0; z-index:auto }
+}
+
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h1>Daily Worklog & Follow-ups (Standalone)</h1>
+      <div class="toolbar">
+        <span id="cloudStatus" class="muted">Cloud: Not connected</span>
+        <button id="connectCloud">Connect OneDrive File</button>
+        <button id="syncNow" class="hidden">Sync now</button>
+        <button id="disconnectCloud" class="hidden">Disconnect</button>
+      </div>
+    </div>
+
+    <div class="row card" style="margin-top:8px">
+      <div style="flex:1 1 160px">
+        <label for="date">Date</label>
+        <input id="date" type="date">
+      </div>
+      <div style="flex:3 1 260px">
+        <label for="title">Title</label>
+        <input id="title" placeholder="What did you work on?">
+      </div>
+      <div style="flex:1 1 160px">
+        <label for="duration">Duration (minutes)</label>
+        <input id="duration" type="number" min="0">
+      </div>
+      <div style="flex:1 1 200px">
+        <label for="tags">Tags (comma separated)</label>
+        <input id="tags" placeholder="sepsis, etl">
+      </div>
+      
+      <div style="flex:1 1 220px">
+        <label><input id="createFU" type="checkbox"> Create follow-up</label>
+        <div id="fuBox" class="hidden" style="margin-top:6px;border:1px dashed var(--border);border-radius:10px;padding:8px"><input id="fuTitle" placeholder="Follow-up title (optional)" style="margin-bottom:6px"><label for="fuDue" style="margin-top:4px; display:block">Due date (optional)</label><input id="fuDue" type="date" style="margin-bottom:6px"><label for="fuNotes" style="margin-top:4px; display:block">Follow-up notes (optional)</label><textarea id="fuNotes" rows="3" placeholder="Additional context for this follow-up"></textarea></div>
+      </div>
+      <div style="flex:1 1 100%;display:flex;justify-content:flex-end;gap:8px">
+        <button id="add" class="primary">Add Activity</button>
+        <button id="backup">Backup (JSON)</button>
+        <span class="file-btn"><button id="restoreBtn" type="button">Restore (JSON)</button><input id="restore" type="file" accept="application/json"></span>
+        <button id="exportCsv">Export CSV</button>
+        <button id="reset">Reset</button>
+      </div>
+    </div>
+
+    <div class="row card" style="margin-top:12px">
+      <div style="flex:2 1 260px">
+        <label for="qfuTitle">Follow-up title</label>
+        <input id="qfuTitle" placeholder="e.g., Close out BI dashboard scope with team">
+      </div>
+      <div style="flex:1 1 200px">
+        <label for="qfuDue">Due date (optional)</label>
+        <input id="qfuDue" type="date">
+      </div>
+      <div style="flex:1 1 200px">
+        <label for="qfuTags">Tags (optional)</label>
+        <input id="qfuTags" placeholder="sepsis, etl">
+      </div>
+      <div style="flex:1 1 160px">
+        <label for="qfuStatus">Status</label>
+        <select id="qfuStatus">
+          <option value="open">Open</option>
+          <option value="in_progress">In Progress</option>
+          <option value="done">Done</option>
+        </select>
+      </div>
+      <div style="flex:1 1 100%">
+        <label for="qfuNotes">Follow-up notes (optional)</label>
+        <textarea id="qfuNotes" rows="3" placeholder="Additional context"></textarea>
+      </div>
+      <div style="flex:1 1 100%; display:flex; justify-content:flex-end">
+        <button id="qfuAdd" class="primary" type="button">Add Follow-up</button>
+      </div>
+    </div>
+
+
+    <div class="kpis" style="margin:12px 0">
+      <div class="card kpi"><div class="muted">Total Hours</div><div id="kpiHours" class="value">0</div></div>
+      <div class="card kpi"><div class="muted">Activities</div><div id="kpiCount" class="value">0</div></div>
+      <div class="card kpi"><div class="muted">Done</div><div id="kpiDone" class="value">0</div></div>
+      <div class="card kpi"><div class="muted">Open FUs</div><div id="kpiFU" class="value">0</div></div>
+    </div>
+
+    
+    <div class="card" style="margin-top:12px">
+      <div class="row" style="align-items:center; justify-content:space-between; gap:8px">
+        <div class="row" style="align-items:center; gap:8px">
+          <span class="muted">Summary Range</span>
+          <select id="range">
+            <option value="last7">Last 7 days</option>
+            <option value="last30">Last 30 days</option>
+            <option value="week">This week</option>
+            <option value="month">This month</option>
+            <option value="today">Today</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <div id="customRange" class="hidden row" style="align-items:center; gap:6px">
+            <label>From <input id="fromDate" type="date"></label>
+            <label>To <input id="toDate" type="date"></label>
+            <button id="applyCustom" type="button">Apply</button>
+          </div>
+        </div>
+        <div class="row" style="align-items:center; gap:8px">
+          <button id="exportSummaryCsv" type="button">Export Summary (CSV)</button>
+          <div class="badge" style="display:flex; gap:6px; align-items:center">
+            <label style="display:flex; gap:4px; align-items:center">
+              <input id="autoBackupEnabled" type="checkbox"> Auto-backup daily at
+            </label>
+            <input id="autoBackupTime" type="time" value="17:00">
+            <button id="runBackupNow" type="button">Backup Now</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    
+<div class="card" style="margin-top:12px">
+  <div class="row" style="align-items:center; justify-content:space-between; gap:8px">
+    <div class="row" style="align-items:center; gap:8px">
+      <span class="muted">Summary Actions</span>
+    </div>
+    <div class="row" style="align-items:center; gap:8px">
+      <button id="openPrintableSummary" type="button">Open Printable Summary</button>
+      <button id="exportSummaryCsv" type="button">Export Summary (CSV)</button>
+    </div>
+  </div>
+</div>
+<div class="row" style="gap:12px">
+        
+      <div class="card" style="flex:1 1 48%">
+        <div class="muted">Hours by Day</div>
+        <canvas id="byDay" height="220"></canvas>
+      </div>
+      <div class="card" style="flex:1 1 48%">
+        <div class="muted">Hours by Tag</div>
+        <canvas id="byTag" height="220"></canvas>
+        <div id="legendByTag" class="row" style="margin-top:8px; flex-wrap:wrap; gap:6px"></div>
+      </div>
+    </div>
+    
+
+        <div class="row" style="margin-top:12px">
+      <div class="card" style="flex:1 1 55%">
+        <div class="row" style="justify-content:space-between;align-items:center;margin:0 0 8px 0"><h3 style="margin:0">Activities</h3><div class="toolbar-sm"><button id="toggleActivitiesSection" type="button">Hide section</button><button id="actsExpandAll" type="button">Expand all</button><button id="actsCollapseAll" type="button">Collapse all</button></div></div>
+        <div id="activitiesSectionContent"><div id="list" class="list"></div></div>
+      </div>
+      <div class="card" style="flex:1 1 45%">
+        <div class="row" style="justify-content:space-between;align-items:center;margin:0 0 8px 0"><h3 style="margin:0">Follow-ups</h3><div class="toolbar-sm"><button id="fuExpandAll" type="button">Expand all</button><button id="fuCollapseAll" type="button">Collapse all</button></div></div>
+        <div><strong>Open</strong></div>
+        <div id="fuOpen" class="list" style="margin:6px 0 12px 0"></div>
+        <div><strong>Completed</strong></div>
+        <div id="fuDone" class="list" style="margin-top:6px"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="muted">Tips: This file is fully standalone (no Internet or CDNs required). For cloud sync, use “Connect OneDrive File” (works best in Edge/Chrome over HTTPS). If blocked by IT, you can still use local storage + Backup/Restore.</div>
+    </div>
+  </div>
+
+  <script>
+  // ---------- Utilities & Persistence ----------
+  const $ = id => document.getElementById(id);
+  const KEY="worklog_followups_store_v1";
+  const todayISO = () => new Date().toISOString().slice(0,10);
+  const parseTags = s => (s||"").split(",").map(t=>t.trim()).filter(Boolean).map(t=>t.toLowerCase());
+  const hours = m => Math.round((m/60)*100)/100;
+  function fmtISO(iso){ if(!iso) return ''; const p=iso.split('-'); if(p.length!==3) return iso; return `${Number(p[1])}/${Number(p[2])}/${p[0]}`; }
+
+  function load(){ try{ const raw=localStorage.getItem(KEY); return raw?JSON.parse(raw):{activities:[],followUps:[]} } catch{ return {activities:[],followUps:[]} } }
+  function save(s){ localStorage.setItem(KEY, JSON.stringify(s)); }
+  function csvExport(filename, rows){
+    if(!rows.length) return;
+    const headers = Object.keys(rows[0]);
+    const csv = [headers.join(",")].concat(rows.map(r=>headers.map(h=>JSON.stringify(r[h]??"")).join(","))).join("\n");
+    const blob = new Blob([csv],{type:"text/csv"}); const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+  
+  // ====== Settings (auto-backup) ======
+  const SETTINGS_KEY = "worklog_settings_v1";
+  function loadSettings(){
+    try{ const raw=localStorage.getItem(SETTINGS_KEY); return raw?JSON.parse(raw):{autoBackup:{enabled:false,time:"17:00",lastRun:""}}; }
+    catch{ return {autoBackup:{enabled:false,time:"17:00",lastRun:""}}; }
+  }
+  function saveSettings(s){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+  let settings = loadSettings();
+  (function initSettingsUI(){
+    const enabledEl = document.getElementById("autoBackupEnabled");
+    const timeEl = document.getElementById("autoBackupTime");
+    if (enabledEl) enabledEl.checked = !!settings.autoBackup.enabled;
+    if (timeEl && settings.autoBackup.time) timeEl.value = settings.autoBackup.time;
+    enabledEl?.addEventListener("change", ()=>{ settings.autoBackup.enabled = enabledEl.checked; saveSettings(settings); });
+    timeEl?.addEventListener("change", ()=>{ settings.autoBackup.time = timeEl.value || "17:00"; saveSettings(settings); });
+    document.getElementById("runBackupNow")?.addEventListener("click", ()=>{
+      downloadJSON(`worklog_backup_${todayISO()}.json`, store);
+      const today = new Date().toISOString().slice(0,10);
+      settings.autoBackup.lastRun = today; saveSettings(settings);
+    });
+    // minute-level scheduler (fires only if page is open)
+    setInterval(()=>{
+      if(!settings.autoBackup.enabled) return;
+      const now = new Date();
+      const [hh,mm] = (settings.autoBackup.time||"17:00").split(":").map(Number);
+      const todayStr = now.toISOString().slice(0,10);
+      const already = settings.autoBackup.lastRun === todayStr;
+      if(!already && now.getHours()===hh && now.getMinutes()===mm){
+        downloadJSON(`worklog_backup_${todayStr}.json`, store);
+        settings.autoBackup.lastRun = todayStr; saveSettings(settings);
+      }
+    }, 60000);
+  })();
+
+  // ====== Custom date range handling ======
+  const fromEl = document.getElementById("fromDate");
+  const toEl = document.getElementById("toDate");
+  const customWrap = document.getElementById("customRange");
+  document.getElementById("range").addEventListener("change", (e)=>{
+    const isCustom = e.target.value === "custom";
+    customWrap?.classList.toggle("hidden", !isCustom);
+    if(!isCustom) renderAll();
+  });
+  document.getElementById("applyCustom")?.addEventListener("click", ()=>{
+    renderAll();
+  });
+
+  function getCurrentRange(){
+    const key = document.getElementById("range").value;
+    if(key !== "custom"){ return rangeObj(key); }
+    const from = fromEl?.value ? new Date(fromEl.value) : null;
+    const to = toEl?.value ? new Date(toEl.value) : null;
+    if (!from && !to) return rangeObj("last7");
+    const start = from ? new Date(from) : new Date("1970-01-01");
+    const end = to ? new Date(to) : new Date();
+    return { start, end };
+  }
+
+  // Replace renderAll's usage of rangeObj(range.value) with getCurrentRange()
+
+  function downloadJSON(filename, obj){
+    const blob=new Blob([JSON.stringify(obj,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  // ---------- Simple date ranges ----------
+  const startOfDay = d => { const x=new Date(d); x.setHours(0,0,0,0); return x; };
+  function rangeObj(key){
+    const now=new Date();
+    if(key==="today") return {start:startOfDay(now), end:startOfDay(now)};
+    if(key==="week"){ const s=new Date(now); s.setDate(now.getDate()-now.getDay()); const e=new Date(s); e.setDate(s.getDate()+6); return {start:startOfDay(s), end:startOfDay(e)}; }
+    if(key==="month"){ const s=new Date(now.getFullYear(), now.getMonth(),1); const e=new Date(now.getFullYear(), now.getMonth()+1,0); return {start:startOfDay(s), end:startOfDay(e)}; }
+    const n = (key==="last30") ? 30 : 7;
+    const end=startOfDay(now); const start=new Date(end); start.setDate(end.getDate()-(n-1)); return {start, end};
+  }
+  const within = (iso, r) => { const d=startOfDay(new Date(iso)); return d>=startOfDay(r.start) && d<=startOfDay(r.end); };
+
+  // ---------- App State ----------
+  let store = load();
+  $("date").value = todayISO();
+  $("createFU").addEventListener("change", e => $("fuBox").classList.toggle("hidden", !e.target.checked));
+
+  $("add").addEventListener("click", ()=>{
+    const title = $("title").value.trim(); if(!title){ alert("Please enter a title"); return; }
+    const act = {
+      id: "act_"+Math.random().toString(36).slice(2,9)+"_"+Date.now().toString(36),
+      date: $("date").value || todayISO(),
+      title,
+      details: $("details")?.value?.trim() || undefined,
+      durationMinutes: $("duration").value ? Number($("duration").value) : 0,
+      tags: parseTags($("tags").value),
+      status: "done",
+      followUp: $("createFU").checked
+    };
+    if (act.followUp){
+      const f = {
+        id: "fu_"+Math.random().toString(36).slice(2,9)+"_"+Date.now().toString(36),
+        createdAt: todayISO(),
+        dueDate: $("fuDue").value || undefined,
+        title: $("fuTitle").value || act.title,
+        notes: (document.getElementById("fuNotes")?.value || act.details),
+        tags: act.tags,
+        status: "open"
+      };
+      act.followUpId = f.id;
+      store.followUps = [f, ...store.followUps];
+    }
+    store.activities = [act, ...store.activities];
+    save(store);
+    $("title").value=""; $("details").value=""; $("duration").value=""; $("tags").value=""; $("status").value="in_progress";
+    $("createFU").checked=false; $("fuBox").classList.add("hidden"); $("fuTitle").value=""; $("fuDue").value=""; (document.getElementById("fuNotes")||{}).value="";
+    renderAll(); autoCloudSave();
+  });
+
+  $("reset").addEventListener("click", ()=>{
+    if(!confirm("Erase all local data?")) return;
+    store={activities:[], followUps:[]}; save(store); renderAll(); autoCloudSave();
+  });
+
+  $("backup").addEventListener("click", ()=> downloadJSON(`worklog_backup_${todayISO()}.json`, store));
+  $("restore").addEventListener("change", async e=>{
+    const file=e.target.files?.[0]; if(!file) return;
+    try{
+      const txt = await file.text(); const obj = JSON.parse(txt);
+      if (!Array.isArray(obj.activities) || !Array.isArray(obj.followUps)) throw new Error("JSON must have activities[] and followUps[]");
+      if (!confirm("Replace your current data with this backup?")) return;
+      store = obj; save(store); renderAll(); autoCloudSave();
+    } catch(err){ alert("Restore failed: " + err.message); }
+    finally { e.target.value=""; }
+  });
+
+  $("exportCsv").addEventListener("click", ()=>{
+    const acts = store.activities.map(a=>({id:a.id,date:a.date,title:a.title,details:a.details||"",durationMinutes:a.durationMinutes||0,tags:(a.tags||[]).join("|"),status:a.status,followUpId:a.followUpId||""}));
+    const fus = store.followUps.map(f=>({id:f.id,createdAt:f.createdAt,dueDate:f.dueDate||"",title:f.title,notes:f.notes||"",tags:(f.tags||[]).join("|"),status:f.status}));
+    const t = todayISO(); csvExport(`activities_${t}.csv`, acts); csvExport(`followups_${t}.csv`, fus);
+  });
+
+  $("range").addEventListener("change", renderAll);
+
+  // ---------- Rendering ----------
+  function renderAll(){
+    const r = getCurrentRange();
+    const acts = store.activities
+      .filter(a=>within(a.date, r))
+      .sort((a,b)=> (b.date.localeCompare(a.date) || (b.id||"").localeCompare(a.id||"")));
+    $("kpiCount").textContent = acts.length;
+    $("kpiDone").textContent = acts.filter(a=>a.status==="done").length;
+    $("kpiFU").textContent = store.followUps.filter(f=>f.status!=="done").length;
+    $("kpiHours").textContent = hours(acts.reduce((s,a)=>s+(a.durationMinutes||0),0));
+
+    // list
+    const list = $("list"); list.innerHTML="";
+    if(!acts.length){ list.innerHTML="<div class='muted'>No entries for this range.</div>"; }
+    
+acts.forEach(a=>{
+  const item=document.createElement("div"); item.className="accordion-item";
+  const header=document.createElement("button"); header.className="accordion-header"; header.setAttribute("aria-expanded","false"); header.type="button";
+  const left=document.createElement("div"); left.className="accordion-title";
+  left.innerHTML = `<span class="caret">▶</span><strong>${a.title}</strong> <span class="muted">(${fmtISO(a.date)})</span>`;
+  const right=document.createElement("div");
+  right.innerHTML = `<button class="edit" title="Edit" type="button">Edit</button> <button class="del" title="Delete" type="button">🗑️</button>`;
+  header.appendChild(left); header.appendChild(right);
+
+  const content=document.createElement("div"); content.className="accordion-content";
+  function chipsHTML(){
+    return `
+      <div class="row" style="margin-top:6px">
+        ${a.durationMinutes?`<span class="tag">${hours(a.durationMinutes)} h</span>`:"<span class='tag'>0 h</span>"}
+        ${(a.tags||[]).map(t=>`<span class="tag">#${t}</span>`).join("")}
+      </div>
+      ${a.details?`<div class="muted" style="margin-top:6px">${a.details}</div>`:""}
+    `;
+  }
+  function renderView(){
+    content.innerHTML = chipsHTML();
+  }
+  function renderEdit(){
+    const hoursVal = a.durationMinutes ? Math.round((a.durationMinutes/60)*100)/100 : 0;
+    content.innerHTML = `
+      <div class="row" style="gap:8px; margin-top:8px">
+        <div style="flex:0 0 180px">
+          <label>Hours</label>
+          <input class="e-hours" type="number" min="0" step="0.25" value="${hoursVal}">
+        </div>
+        <div style="flex:1 1 auto; display:flex; gap:8px; align-items:flex-end; justify-content:flex-end">
+          <button class="save" type="button">Save</button>
+          <button class="cancel" type="button">Cancel</button>
+        </div>
+      </div>`;
+    content.querySelector(".save").addEventListener("click", ()=>{
+      const h = parseFloat(content.querySelector(".e-hours").value || "0");
+      const minutes = isNaN(h) ? 0 : Math.round(h*60);
+      store.activities = store.activities.map(x=> x.id===a.id ? { ...x, durationMinutes: minutes } : x);
+      save(store); renderAll(); autoCloudSave();
+    });
+    content.querySelector(".cancel").addEventListener("click", ()=>{ renderView(); });
+  }
+
+  header.addEventListener("click",(e)=>{
+    if(e.target.closest(".del") || e.target.closest(".edit")) return;
+    const open = item.classList.toggle("open");
+    header.setAttribute("aria-expanded", String(open));
+  });
+
+  item.appendChild(header); item.appendChild(content);
+  renderView();
+
+  // Edit & Delete actions
+  right.querySelector(".edit").addEventListener("click", (e)=>{
+    e.stopPropagation();
+    if (!item.classList.contains("open")) { item.classList.add("open"); header.setAttribute("aria-expanded","true"); }
+    renderEdit();
+  });
+  right.querySelector(".del").addEventListener("click", (e)=>{
+    e.stopPropagation();
+    if(!confirm("Delete this activity?")) return;
+    store.activities = store.activities.filter(x=>x.id!==a.id); save(store); renderAll(); autoCloudSave();
+  });
+
+  list.appendChild(item);
+});
+
