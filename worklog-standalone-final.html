@@ -606,7 +606,7 @@ const makeFU = (f) => {
       const val = values[i]; const y = h - padding - (val/maxV)*plotH;
       ctx.fillStyle="#93c5fd"; ctx.fillRect(x-bw/2, y, bw, h-padding - y);
       ctx.fillStyle="#334155"; ctx.font="20px system-ui"; ctx.textAlign="center";
-      if(labels.length<=12){ ctx.fillText(new Date(lab).toLocaleDateString(undefined,{month:"numeric",day:"numeric"}), x, h-padding+24); }
+      if(labels.length<=12){ ctx.fillText(fmtISO(lab), x, h-padding+24); }
     });
     // y labels
     ctx.fillStyle="#334155"; ctx.textAlign="right";
