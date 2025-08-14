@@ -244,7 +244,13 @@
   // ---------- Utilities & Persistence ----------
   const $ = id => document.getElementById(id);
   const KEY="worklog_followups_store_v1";
-  const todayISO = () => new Date().toISOString().slice(0,10);
+  const todayISO = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+};
   const parseTags = s => (s||"").split(",").map(t=>t.trim()).filter(Boolean).map(t=>t.toLowerCase());
   const hours = m => Math.round((m/60)*100)/100;
   function fmtISO(iso){ if(!iso) return ''; const p=iso.split('-'); if(p.length!==3) return iso; return `${Number(p[1])}/${Number(p[2])}/${p[0]}`; }
@@ -327,36 +333,20 @@
   // ---------- Simple date ranges ----------
   const startOfDay = d => { const x=new Date(d); x.setHours(0,0,0,0); return x; };
   function rangeObj(key){
-  const now = new Date();
-  const startOfToday = toLocalDateOnly(now);
-  const endOfToday = toLocalDateOnly(now);
-  let start = startOfToday, end = endOfToday;
-
-  if(key === "today"){
-    // start & end already set
-  } else if(key === "week"){
-    const day = startOfToday.getDay(); // 0=Sun .. 6=Sat
-    const diffToMon = (day === 0 ? -6 : 1 - day);
-    start = addDaysLocal(startOfToday, diffToMon);
-  } else if(key === "month"){
-    start = new Date(startOfToday.getFullYear(), startOfToday.getMonth(), 1);
-    end = new Date(startOfToday.getFullYear(), startOfToday.getMonth()+1, 0);
-  } else if(key === "last7"){
-    start = addDaysLocal(startOfToday, -6);
-  } else if(key === "last30"){
-    start = addDaysLocal(startOfToday, -29);
-  } else {
-    // default to last7
-    start = addDaysLocal(startOfToday, -6);
-  }
-  return { start, end };
-};
+    const now=new Date();
+    if(key==="today") return {start:startOfDay(now), end:startOfDay(now)};
     if(key==="week"){ const s=new Date(now); s.setDate(now.getDate()-now.getDay()); const e=new Date(s); e.setDate(s.getDate()+6); return {start:startOfDay(s), end:startOfDay(e)}; }
     if(key==="month"){ const s=new Date(now.getFullYear(), now.getMonth(),1); const e=new Date(now.getFullYear(), now.getMonth()+1,0); return {start:startOfDay(s), end:startOfDay(e)}; }
     const n = (key==="last30") ? 30 : 7;
     const end=startOfDay(now); const start=new Date(end); start.setDate(end.getDate()-(n-1)); return {start, end};
   }
-  const within = (iso, r) => { const d=startOfDay(new Date(iso)); return d>=startOfDay(r.start) && d<=startOfDay(r.end); };
+  const within = (iso, r) => {
+  if(!iso) return false;
+  const [y,m,d] = String(iso).split('-').map(Number);
+  const local = new Date(y, (m||1)-1, d||1, 0,0,0,0);
+  const sd = startOfDay(local);
+  return sd>=startOfDay(r.start) && sd<=startOfDay(r.end);
+};
 
   // ---------- App State ----------
   let store = load();
